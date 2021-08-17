@@ -1,0 +1,734 @@
+---
+title: "R code and Markdown output to accompany Exploring the relationship between dog ownership and car use in the UK based on spatial data "
+author: "Ian Philips"
+date: "06/08/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = F)
+```
+
+
+# This is an R markdown version of the script that I used to run the dogs and car use analysis
+
+
+
+```{r}
+#packages
+
+#these are the main ones for wrangling
+# a few others are found in later chunks 
+library(tidyverse)
+library(tmap)
+library(sf)
+
+```
+
+
+First read in the data sets to use.  There is a table detailing these in the paper.  
+
+```{r}
+#--------------read datasets to be wrabngled ------------------------
+#dog data 
+dogs <- read_csv("data/DFEFAdogdata.csv")
+postcode_oa <- read_csv("data/OA_postcode.csv")
+lookup <- read_csv("data/OA11_LSOA11_MSOA11_LAD11_EW_LUv2.csv")
+
+postcodepop <- read_csv("population_postcodes/Postcode_Estimates_Table_1.csv")
+sum(postcodepop$Total)
+
+#This is a set of various variables including rural urban classification
+clusterdata <- read_csv("MOTdata/LSOAamasterEcc030418subset.csv")
+clusterdata <- clusterdata %>% select(LSOA11CD,income,green900,RUC11,ru5)
+
+
+#MOT data (version 9)
+mot <- read_csv("data/v9carsAndPop.csv")
+
+
+#spatial data 
+#lsoa polygons
+lsoa <- st_read(dsn = "LSOA11SG", layer = "LSOAEW11SG")
+
+
+#english and welsh LSOA population weighted centroids
+pwc <- st_read("data/dist_to_stations.gpkg") # pop weighted cents with rail access info/  
+pwc <- pwc %>% select(code,name,dist_to_nearest_station)
+
+
+
+#geodemographic data 
+income <- read_csv("data/ExperianMedianHHIncome2011.csv")
+census <- read_csv("data/selected_UKcensus2011.csv")
+census <- census %>% select(LSOA11CD,nocar_percent,
+                            car1_percent,
+                            car2_percent,
+                            car3_percent,
+                            car4_or_more_percent,
+                            age_median,
+                            white_percent,
+                            dwel_detached_percent,
+                            dwel_semi_detached_percent,
+                            dwel_terraced_percent,
+                            flat_percent,
+                            econ_all_econ_active_percent)
+
+
+female <- read_csv("data/urp_pc_female.csv")
+female <- female %>% select(llsoa11cd,pc_female)
+
+census <- left_join(census,female,by = c("LSOA11CD" = "llsoa11cd" ))
+
+
+#vul index I didn't use this in tha analysis in the end 
+vul <- read_csv("data/Mattiolietal.csv")
+
+
+#postcode districts 
+# from https://digimap.edina.ac.uk Code point open polygons
+#https://datashare.ed.ac.uk/handle/10283/2597
+
+pcdist <- st_read("GB_Postcodes/PostalDistrict.shp")
+#qtm(pcdist)
+
+#summary(census$pc_female)
+
+```
+
+##  Wrangle the data
+
+The spatial resolution for analysis is Postcode outcode.    
+
+Car use data is available at LSOAa resolution and dog ownership is at a coarser non-overlapping postcode outcode geography (e.g. LS21).  To avoid ecological fallacy (Openshaw, 1984)  we aggregated to postcode outcode resolution .  
+
+
+
+```{r}
+#wrangle data
+
+##### wrangling data ###################
+
+#We have data at 2 spatial resolutions, dog data at postcode district resolution which are larger areas
+#than lsoas which is the resolution of the MOT data.  
+#WE can aggregate to postcode districts: this smooths out some vatiation in the mot vehicle use data
+#or we can attribute the dog ownership level to each LSOA.  This preseerves variation in MOT vehicle use data,
+#but there can be some ecological fallacy issues.  
+
+
+
+
+#----------- wrangle the dogs data so the spatial resolution is postcode districts.   -----------
+
+#wrangle to postcodes to outcode (e.g. LS2 the postcode district)
+#generate a human population estimate for the postcode districts, by joining dta to the dogs data 
+#spatial join the postcode polygon attributes to points 
+#join the dog data.  
+
+
+#------------------ join postcode population to postcode district ----
+
+#first aggregate postcode population to postcode district population 
+postcode_split2 <- postcodepop %>%
+  extract(Postcode, into = c('out', 'in'), '(\\S{2,4})\\s*(\\d\\w\\w)') %>%
+  mutate(Postcode = sprintf('% -4s%s', out, `in`))
+
+#names(postcodepop)
+#names(postcode_split2)
+
+#group 
+groups <- group_by(postcode_split2,out)
+#summarize
+postcodedistpop <- dplyr::summarize(groups, totalhumanpop = sum(Total))
+#sum(postcodedistpop$totalhumanpop)
+
+
+#this gives a population per postcode district.  Next we can 
+#make a postcode area variable of dogs per person.  
+#this will eventually get compared to the MOT miles per person variable. 
+
+dogs <- left_join(dogs,postcodedistpop,by = c("PostcodeDistrict" = "out"))
+#names(dogs)
+#sum(dogs$totalhumanpop,na.rm=T)
+#sum(dogs$EstimatedDogPopulation,na.rm=T)
+
+dogs$Dogs_pp <- dogs$EstimatedDogPopulation / dogs$totalhumanpop
+#summary(dogs$Dogs_pp)
+#summary(dogs$totalhumanpop)
+
+#plot(dogs$totalhumanpop,dogs$EstimatedDogPopulation,main = "Dog population vs Human Population")
+
+#cor(dogs$totalhumanpop,dogs$EstimatedDogPopulation,use= "pairwise.complete.obs",method = "pearson")
+#0.437772
+#cor(dogs$totalhumanpop,dogs$EstimatedDogPopulation,use= "pairwise.complete.obs",method = "spearman")
+#0.5213059
+#there is a moderately strong correlation, th plot shows a cone.  
+#There is likely another factor / factors which might provide a stronger 
+#relationship with multiple regression 
+
+
+#names(dogs)
+#[1] "PostcodeDistrict"       "EstimatedDogPopulation" "totalhumanpop"          "Dogs_pp"  
+
+n = dogs %>% select(PostcodeDistrict) %>% distinct()
+#duplicates = dogs %>% 
+#  group_by(PostcodeDistrict) %>% 
+#  filter(n()>1)
+
+
+
+#------------- process LSOA data ------------------ 
+
+#you can uncomment this and make a map if you want but it takes a while to render
+# tm_shape(pcdist)+
+#   tm_polygons(alpha = 0.5)+
+#   tm_shape(pwc)+
+#   tm_dots(col = "red")
+
+#------------ select columns required from the mot data
+#names(mot)
+mot2 <- mot %>% select(LSOA,Pop,HH,N,km_pp,km_perAdult,emfac_co2Av,litresAv,sizeAv)
+
+
+pwc <- left_join(pwc,mot2,by = c("code" = "LSOA"))
+pwc <- pwc %>% filter(!is.na(km_pp)) # removes scottish lsoa/dz as we only have dogs data for England and Wales 
+
+
+pwc<- left_join(pwc,clusterdata,by = c("code" = "LSOA11CD"))
+pwc<- left_join(pwc,income,by = c("code" = "LSOA11CD"))
+#make an income quintile
+pwc <- pwc %>% mutate(income_quintile = ntile(Median_Household_Income, 5))
+
+#remove outlier areas where mean kmpp is over 20,000 pa 
+filtered <- pwc %>% filter(km_pp > 20000)
+pwc <- pwc %>% filter(km_pp < 20000)
+
+
+#join selected census variables 
+pwc<- left_join(pwc,census,by = c("code" = "LSOA11CD"))
+pwc$multicarpc <- pwc$car4_or_more_percent + pwc$car3_percent +pwc$car2_percent
+
+
+#join vul index
+pwc <- left_join(pwc,vul, by = c("code" = "LSOA11CD"))
+
+#######---------- spatial joining -------########
+
+
+#----- make data at postcode district resolution ---------
+#st_crs(pwc)
+pcdist <- st_transform(pcdist,crs = 27700)
+
+#names(pwc)
+
+pcdist2 <- st_join(pcdist, pwc %>% filter(!is.na(ru5))) %>% group_by(PostDist) %>% 
+  summarise(meankm_pp = mean(km_pp,na.rm = T),
+            meankm_per_adult = mean(km_perAdult,na.rm = T),
+            mean_emfac_co2Av = mean(emfac_co2Av,na.rm = T),
+            mean_engine_size = mean(sizeAv,na.rm = T),
+            mean_fuelpp_l = mean(litresAv,na.rm = T),
+            tot_pop_mot = sum(Pop,na.rm = T),
+            num_cars = sum(N,na.rm = T),
+            HH_mot = sum(HH,na.rm = T),
+            dist_to_nearest_station = mean(dist_to_nearest_station,na.rm = T),
+            median_hh_income = mean(Median_Household_Income,na.rm = T),
+            ru5 = min(ru5,na.rm = T),
+            nocar_percent = mean(nocar_percent,na.rm = T),
+            multicarpc = mean(multicarpc,na.rm = T),
+            age_median = mean(age_median,na.rm = T),
+            white_percent = mean(white_percent,na.rm = T),
+            dwel_detached_percent = mean(dwel_detached_percent,na.rm = T),
+            dwel_semi_detached_percent = mean(dwel_semi_detached_percent,na.rm = T),
+            dwel_terraced_percent = mean(dwel_terraced_percent,na.rm = T),
+            flat_percent = mean(flat_percent,na.rm =T),
+            econ_all_econ_active_percent = mean(econ_all_econ_active_percent,na.rm =T),
+            vul = mean(vul,na.rm = T),
+            pc_female = mean(pc_female,na.rm = T)
+            )
+
+#---remove scotland unfortunately because *data* --
+#scotland postcodes will have na for km _pp because the MOT data I read in is for England and Wales
+pcdist2 <- pcdist2 %>% filter(!is.na(meankm_pp))
+
+#---  deal with RU5 
+#summary(pwc$ru5)
+#summary(pcdist2$ru5)
+
+
+test <- pcdist2 %>% filter(is.na(ru5)) 
+
+pcdist2$ru5 <- as.factor(pcdist2$ru5)
+
+pcdist2 <- pcdist2 %>% mutate(income_quintile = ntile(median_hh_income, 5))
+#summary(pcdist2$income_quintile)
+
+#--------- check for duplicates ---- 
+duplicates = pcdist2 %>% 
+  group_by(PostDist) %>% 
+  filter(n()>1) #no duplicates found
+
+
+#note outliers of a mean of over 20000km per person pa per lsoa have been removed
+#remove 9 outlier postcode districts #done above
+#filtered <- pcdist2 %>% filter(meankm_pp > 20000) #done above
+
+#hist(pcdist2$meankm_pp)
+
+#map the mot data mean km per person aggregated to postcode districts
+#tm_shape(pcdist2)+
+#  tm_polygons(col = "meankm_pp",n=5,style = "quantile",
+#              alpha = 0.5)
+
+#glimpse(pcdist2)
+
+
+#-----join to the dogs data ------
+pcdist2 <- left_join(pcdist2,dogs,by = c("PostDist" = "PostcodeDistrict" ))
+
+#there are no missing values for dog population 
+pcdist2 %>% filter(is.na(EstimatedDogPopulation))
+
+#make the dogs per person metrics with both population figures
+pcdist2$Dogs_ppmot <- pcdist2$EstimatedDogPopulation/pcdist2$tot_pop_mot
+pcdist2$Dogs_pppcd <- pcdist2$EstimatedDogPopulation/pcdist2$totalhumanpop
+
+#base r plot
+#plot(pcdist2$Dogs_ppmot,pcdist2$Dogs_pppcd)
+#ggplot
+# pcdist2 %>% 
+#   ggplot()+
+#   geom_point(aes(x = Dogs_ppmot, y = Dogs_pppcd))+
+#   geom_smooth(aes(x = Dogs_ppmot, y = Dogs_pppcd))
+
+
+#cor(pcdist2$Dogs_ppmot,pcdist2$Dogs_pppcd,use= "pairwise.complete.obs",method = "pearson")
+#0.96
+#cor(pcdist2$Dogs_ppmot,pcdist2$Dogs_pppcd,use= "pairwise.complete.obs",method = "spearman")
+#0.99
+
+#dissimilarity increases with high values.  the outliers are for places 
+#with more than 1 dog per person mot and more than 1.5 pcd
+#summary(pcdist2$Dogs_ppmot)
+#summary(pcdist2$Dogs_pppcd)
+
+#---- human population estimates seem consistent
+#we have an estimate of postcode population, and also census population from LSOAs.  
+#when lsoa data is aggregated to postcode level it seems consistent 
+#correlation between human population estimates is very high and linear
+# pcdist2 %>% 
+#   ggplot()+
+#   geom_point(aes(x = tot_pop_mot, y = totalhumanpop))+
+#   geom_smooth(aes(x = tot_pop_mot, y = totalhumanpop))
+
+
+#4 postcode districts have more than 1.5 dogs per person, 
+#DL11, Upper Swaledale 
+#LA20 duddoneskdale and wasdale,
+#LL23, Bala N Wales 
+#and 
+#PO41 Isle of white Yarmouth 
+topdogs <- filter(pcdist2, Dogs_ppmot >1.5)
+
+
+
+#use dogs postcode district in the analysis 
+pcdist2$Dogs_pp <- pcdist2$Dogs_pppcd
+
+#------ map the dogs data --------------
+# #tm_shape(pcdist2)+
+# #  tm_polygons(col = "Dogs_pp",n=5,style = "quantile",
+# #              alpha = 0.5)
+# 
+# tm_shape(pcdist2)+
+#   tm_polygons(col = "Dogs_pp",n=5,style = "fisher",
+#               alpha = 0.5)
+
+
+pcdist2$cars_pp_pcdist <- pcdist2$num_cars/pcdist2$totalhumanpop
+
+
+
+
+
+```
+
+
+```{r}
+
+#---------save key datasets -----------------
+
+#commented in the markdown as I've already done it
+# st_write(pcdist2,"output_postcode_focus/postcode_focussed_data290621.gpkg")
+# st_write(pcdist2,"output_postcode_focus/postcode_focussed_data290621.shp")
+# 
+# 
+# pcdist2csv <- pcdist2
+# st_geometry(pcdist2csv) <- NULL
+# write_csv(pcdist2csv,"output_postcode_focus/postcode_focussed_data290621.csv")
+
+
+```
+
+
+## ANALYSIS OF DOGS PP AND CAR USE AT POSTCODE DISTRICT RESOLUTION
+
+I decided not to transform dogs_pp to log(dogs_pp) because keeping 
+the original values makes interpretation easier. 
+Using logs boosts the R squared slightly in the regression models,
+ but the findings are the same: dog ownership remains a significant predictor even 
+controlling for several different variables .
+
+below is figure 1 from the paper and the spearman and pearson correlation overall i.e not by income quintile
+
+
+
+
+```{r}
+
+
+#####################################################################
+##### ANALYSIS OF DOGS PP AND CAR USE AT POSTCODE DISTRICT RESOLUTION
+#####################################################################
+
+#---  dogs vs km pp --- by income quintile  
+
+##I decided not to transform dogs_pp to log(dogs_pp) because keepint 
+#the original values makes interpretation easier. 
+#Using logs boosts the R squared slightly in the regression models,
+# but the findings are the same: dog ownership remains a significant predictor even 
+#controlling for several different variables 
+
+
+
+require(hrbrthemes)
+df <- pcdist2
+
+
+#This plot is figure 1 in the paper 
+df %>% filter(!is.na(meankm_pp)) %>%
+  filter(!is.na(income_quintile)) %>%
+  ggplot()+
+  geom_point(aes(x = Dogs_pp, y = meankm_pp,colour=factor(income_quintile)))+
+  geom_smooth(aes(x = Dogs_pp, y = meankm_pp),se = FALSE)+
+  facet_wrap(~income_quintile)+
+  #theme_ipsum() +
+  scale_color_ipsum(name = "income quintile\n(1 = lowest)")+
+  xlab("Dogs per person")+
+  ylab("Car km travelled per person per year")
+
+#correlations are high
+cor(df$Dogs_pp,df$meankm_pp,use= "pairwise.complete.obs",method = "pearson")
+#0.55
+cor(df$Dogs_pp,df$meankm_pp,use= "pairwise.complete.obs",method = "spearman")
+#0.667
+
+
+
+```
+
+The basic bivariate regression 
+This is an interesting finding. Even without removing any outliers or transforming the predictor variable (dogs per person)  
+An R squared of 0.3109  is achieved when dogs per person is the only 
+predictor of car km travelled in England and Wales, 
+ and it supports the hypothesis that dog ownership is a car dependent practice
+
+```{r}
+
+r1 <- lm(data = df,meankm_pp~Dogs_pp)
+summary(r1) #0.0.3109 
+
+## This is an interesting finding. Even without removing any outliers or transforming the predictor variable (dogs per person)  
+## An R squared of 00.3109  is achieved when dogs per person is the only 
+## predictor of car km travelled in England and Wales, 
+## and it supports the hypothesis that dog ownership is a car dependent practice.
+
+
+library(broom)
+reg_kmvsdog  <- tidy(r1)
+#write_csv(reg_kmvsdog,"output_postcode_focus/reg_kmvsdog.csv")
+
+```
+
+Figure 2 Relationship between dog ownership and rural areas (R = 0.63 Spearman)
+
+
+```{r}
+
+#---------------------- plot Figure 2 Relationship between dog ownership and rural areas (R = 0.63 Spearman)---
+
+require(hrbrthemes)
+df <- pcdist2
+
+#this plot makes figure 2 in the paper 
+df %>% filter(!is.na(meankm_pp)) %>%
+  filter(!is.na(ru5)) %>% #filter(!is.na(Dogs_pp)) %>%
+  ggplot()+
+  geom_point(aes(x = Dogs_pp, y = meankm_pp,colour=factor(ru5)))+
+  geom_smooth(aes(x = Dogs_pp, y = meankm_pp),se = FALSE)+
+  facet_wrap(~ru5)+
+  #theme_ipsum() +
+  scale_color_ipsum(name = "Urbanisation\n(1 = most urban)")+
+  xlab("Dogs per person")+
+  ylab("Car km travelled per person per year")
+
+
+
+
+```
+
+
+correlations for figure 2
+
+
+```{r}
+
+#correl;ations by RU5 
+c <- df %>% filter(!is.na(meankm_pp)) %>%
+  filter(ru5 ==1)
+cor(c$Dogs_pp,c$meankm_pp,use= "pairwise.complete.obs",method = "pearson") #0.46
+cor(c$Dogs_pp,c$meankm_pp,use= "pairwise.complete.obs",method = "spearman")#0.55
+
+c <- df %>% filter(!is.na(meankm_pp)) %>%
+  filter(ru5 ==2)
+cor(c$Dogs_pp,c$meankm_pp,use= "pairwise.complete.obs",method = "pearson") #0.22
+cor(c$Dogs_pp,c$meankm_pp,use= "pairwise.complete.obs",method = "spearman")#0.15
+
+c <- df %>% filter(!is.na(meankm_pp)) %>%
+  filter(ru5 ==3)
+cor(c$Dogs_pp,c$meankm_pp,use= "pairwise.complete.obs",method = "pearson") #0.41
+cor(c$Dogs_pp,c$meankm_pp,use= "pairwise.complete.obs",method = "spearman")#0.43
+
+c <- df %>% filter(!is.na(meankm_pp)) %>%
+  filter(ru5 ==4)
+cor(c$Dogs_pp,c$meankm_pp,use= "pairwise.complete.obs",method = "pearson") #0.10
+cor(c$Dogs_pp,c$meankm_pp,use= "pairwise.complete.obs",method = "spearman")#0.14
+
+c <- df %>% filter(!is.na(meankm_pp)) %>%
+  filter(ru5 ==5)
+cor(c$Dogs_pp,c$meankm_pp,use= "pairwise.complete.obs",method = "pearson") #0.11
+cor(c$Dogs_pp,c$meankm_pp,use= "pairwise.complete.obs",method = "spearman")#-0.03
+
+```
+
+
+## Adding covariates e.g.  y = mean kmpp  vs dogs pp + other variables
+
+the linear regression s are summarised below 
+
+meankm_pp~ Dogs_pp + income_quintile + ru5
+
+and then 
+
+data = df,meankm_pp~ income_quintile + ru5
+
+The model has a higher adjusted R squared when dogs are included.  
+
+
+```{r}
+
+
+############------------ Adding Covariates -----################################
+
+
+#--------- adding covariates e.g.  y = mean kmpp  vs dogs pp + other variables
+
+#This is presented in teh paper in table 2
+
+
+#USE nolog in the paper because it's easier interpretation 
+
+#km dogs income ru5 
+r1 <- lm(data = df,meankm_pp~ Dogs_pp + income_quintile + ru5)
+summary(r1) # # adj R qsuared is   0.6103
+reg_kmvsDogIncomeRu5  <- tidy(r1)
+#write_csv(reg_kmvsDogIncomeRu5 ,"output_postcode_focus/reg_kmvsDogIncomeRu5.csv")
+
+
+#km income ru5 no dogs
+r1 <- lm(data = df,meankm_pp~ income_quintile + ru5)
+summary(r1) # # adj R qsuared is    0.5802 
+reg_kmvsIncomeRu5  <- tidy(r1)
+#write_csv(reg_kmvsIncomeRu5,"output_postcode_focus/reg_kmvsIncomeRu5.csv")
+
+
+```
+
+
+
+## The extended model 
+
+#### Kent and Mulley's predictors 
+
+First is a model just considering the factors considered in Kent and Mulley (2017), age, gender, dwelling type econ activity and car ownership.  this isn't the one in the paper.  the one in the paper has these Kent and Mulley variables in addition to the urbanisation and income variables which we've already considered.  
+
+
+
+```{r}
+
+
+#--------- model the types of variables considered by Kent and Mulley ------
+
+# there wasn't space to include this step in the paper
+
+#we are going to consider a number of variables with which there is correlation 
+
+#let's make a correlation plot of the variables we will consider in the model
+
+df <- pcdist2 %>% select(PostDist,meankm_pp,Dogs_pp,age_median,dwel_detached_percent,
+                         dwel_semi_detached_percent,dwel_terraced_percent,flat_percent,
+                         econ_all_econ_active_percent,
+                         nocar_percent,pc_female)
+
+
+kent_mulley_data <- df 
+st_geometry(kent_mulley_data) <- NULL
+#write_csv(kent_mulley_data ,"output_postcode_focus/kent_mulley_data.csv")
+
+#library(corrplot)
+#library(Hmisc)
+#corrplot(df, method = "shade",type = "upper", order = "hclust", 
+#         tl.col = "black", tl.srt = 45)
+
+
+#install.packages("ggcorrplot")
+require(ggcorrplot)
+
+corr <- df 
+st_geometry(corr)<- NULL
+corr <- corr %>% drop_na() %>% select(-PostDist)
+
+
+corr <- round(cor(corr), 1)
+ggcorrplot(corr, hc.order = TRUE, type = "lower",
+           outline.col = "white",
+           ggtheme = ggplot2::theme_gray,
+           colors = c("#6D9EC1", "white", "#E46726"),lab = TRUE)
+
+
+
+#names(pcdist2)
+
+
+
+
+```
+
+Predicting km per person without dogs
+
+```{r}
+
+#######---- without removing any outliers #######------------- 
+
+#no logs for ease of interpretation 
+## without dogs
+r1 <- lm(data = df,meankm_pp~ age_median + pc_female + dwel_detached_percent +
+           dwel_semi_detached_percent + dwel_terraced_percent + flat_percent+
+           econ_all_econ_active_percent+
+           nocar_percent
+)
+
+summary(r1) #Adjusted R-squared:  0.8324  
+kent_mulley_nodog  <- tidy(r1)
+#write_csv(kent_mulley_nodog ,"output_postcode_focus/kent_mulley_nodog.csv")
+
+```
+
+Predicting km per person with dogs
+
+```{r}
+#this is the model to try to predict car km travelled if we include dog ownership 
+r1 <- lm(data = df,meankm_pp~ Dogs_pp + age_median + pc_female + dwel_detached_percent +
+           dwel_semi_detached_percent + dwel_terraced_percent + flat_percent+
+           econ_all_econ_active_percent+
+           nocar_percent
+           )
+
+summary(r1) #Adjusted R-squared:  0.8403  
+kent_mulley_withdog  <- tidy(r1)
+#write_csv(kent_mulley_withdog ,"output_postcode_focus/kent_mulley_withdog.csv")
+
+```
+
+
+
+
+####  The extended model (D and E ) used in the paper 
+
+
+
+```{r}
+
+#--------------------- kent and mulley + income and urbanisation  -----
+
+##this overall combined model is included in the paper (models D & E)
+
+
+#we are going to consider a number of variables with which there is correlation 
+
+#let's make a correlation plot of the variables we will consider in the model
+
+df <- pcdist2 %>% select(PostDist,meankm_pp,Dogs_pp,income_quintile,ru5,age_median,dwel_detached_percent,
+                         dwel_semi_detached_percent,dwel_terraced_percent,flat_percent,
+                         econ_all_econ_active_percent,
+                         nocar_percent,pc_female)
+
+
+kent_mulley_data <- df 
+st_geometry(kent_mulley_data) <- NULL
+#write_csv(kent_mulley_data ,"output_postcode_focus/kent_mulley_income_ru5_data.csv")
+
+
+
+```
+
+
+Without dogs per pserson as a predictor
+
+
+```{r}
+
+#######---- without removing any outliers #######------------- 
+
+#no logs for ease of interpretation 
+## without dogs
+r1 <- lm(data = df,meankm_pp~ income_quintile +ru5 +  age_median + pc_female + dwel_detached_percent +
+           dwel_semi_detached_percent + dwel_terraced_percent + flat_percent+
+           econ_all_econ_active_percent+
+           nocar_percent
+)
+
+summary(r1) #Adjusted R-squared:  0.8718  
+kent_mulley_nodog  <- tidy(r1)
+#write_csv(kent_mulley_nodog ,"output_postcode_focus/kent_mulley_income_ru5_nodog.csv")
+
+
+
+```
+
+
+With dogs per person as a predictor The Adjusted R squared is still slightly higher than without it even when a large number of other predictors are included in the model.  
+
+
+
+```{r}
+
+#this is the model to try to predict car km travelled if we include dog ownership 
+r1 <- lm(data = df,meankm_pp~ Dogs_pp +income_quintile +ru5 + age_median + pc_female + dwel_detached_percent +
+           dwel_semi_detached_percent + dwel_terraced_percent + flat_percent+
+           econ_all_econ_active_percent+
+           nocar_percent
+)
+
+summary(r1) #Adjusted R-squared:  0.8752  
+kent_mulley_withdog  <- tidy(r1)
+#write_csv(kent_mulley_withdog ,"output_postcode_focus/kent_mulley_income_ru5_withdog.csv")
+```
+
+
+
+This is the end of the analysis used in the paper.  
+
+
+
+
+
