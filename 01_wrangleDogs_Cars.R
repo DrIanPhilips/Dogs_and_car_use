@@ -3,9 +3,6 @@
 ### Plots and regression analysis is done in script 02.  
 
 
-
-
-
 #---------- read data ---------------- 
 
 
@@ -25,9 +22,12 @@ sum(postcodepop$Total)
 #This is a set of various variables including rural urban classification
 clusterdata <- read_csv("MOTdata/LSOAamasterEcc030418subset.csv")
 clusterdata <- clusterdata %>% dplyr::select(LSOA11CD,income,green900,RUC11,ru5)
+#This is the % of families with 1 or more dependent children 
+#from the 2011 census table QS118ew
+child <- read_csv("data/QS118ew_dep_child.csv")
 
-
-#MOT data (version 9)
+#MOT data (version 9) Data from the MOT project 
+#see ref to Cairns et al 2014 in paper table 1 
 mot <- read_csv("data/v9carsAndPop.csv")
 
 
@@ -36,7 +36,7 @@ mot <- read_csv("data/v9carsAndPop.csv")
 lsoa <- st_read(dsn = "LSOA11SG", layer = "LSOAEW11SG")
 
 
-#english and welsh LSOA population weighted centroids
+#English and Welsh LSOA population weighted centroids
 pwc <- st_read("data/dist_to_stations.gpkg") # pop weighted cents with rail access info/  
 pwc <- pwc %>% dplyr::select(code,name,dist_to_nearest_station)
 
@@ -65,7 +65,7 @@ female <- female %>% dplyr::select(llsoa11cd,pc_female)
 census <- left_join(census,female,by = c("LSOA11CD" = "llsoa11cd" ))
 
 
-#vul index I didn't use this in tha analysis in the end 
+#vul index I didn't use this in the analysis in the end 
 vul <- read_csv("data/Mattiolietal.csv")
 
 
@@ -168,7 +168,7 @@ pwc<- left_join(pwc,income,by = c("code" = "LSOA11CD"))
 #make an income quintile
 pwc <- pwc %>% mutate(income_quintile = ntile(Median_Household_Income, 5))
 
-#remove outlier areas where mean kmpp is over 20,000 pa 
+#remove outlier lsoas where mean kmpp is over 20,000 pa 
 filtered <- pwc %>% filter(km_pp > 20000)
 pwc <- pwc %>% filter(km_pp < 20000)
 
@@ -176,6 +176,10 @@ pwc <- pwc %>% filter(km_pp < 20000)
 #join dplyr::selected census variables 
 pwc<- left_join(pwc,census,by = c("code" = "LSOA11CD"))
 pwc$multicarpc <- pwc$car4_or_more_percent + pwc$car3_percent +pwc$car2_percent
+
+
+names(child)
+pwc <- left_join(pwc,child, by = c("code" = "lsoa11cd"))
 
 
 #join vul index
@@ -212,7 +216,8 @@ pcdist2 <- st_join(pcdist, pwc %>% filter(!is.na(ru5))) %>% group_by(PostDist) %
             flat_percent = mean(flat_percent,na.rm =T),
             econ_all_econ_active_percent = mean(econ_all_econ_active_percent,na.rm =T),
             vul = mean(vul,na.rm = T),
-            pc_female = mean(pc_female,na.rm = T)
+            pc_female = mean(pc_female,na.rm = T),
+            pc_child = mean(pc_families_dep_children)
             )
 
 #---remove scotland unfortunately because *data* is a devolved issue and England and Scotland publish data separately --
@@ -336,14 +341,13 @@ pcdist2$RuralVillageDispersed[pcdist2$ru5 == 5] <- 1
 glimpse(pcdist2)
 #---------save key datasets -----------------
 
-#if you want to rewrite thes thenun comment here
-#st_write(pcdist2,"output_postcode_focus/postcode_focussed_data270921.gpkg")
-#st_write(pcdist2,"output_postcode_focus/postcode_focussed_data270921.shp")
+#if you want to rewrite these then un-comment here
+#st_write(pcdist2,"output_postcode_focus/postcode_focussed_data281021.gpkg")
 
 
 pcdist2csv <- pcdist2
 st_geometry(pcdist2csv) <- NULL
-#write_csv(pcdist2csv,"output_postcode_focus/postcode_focussed_data270921.csv")
+#write_csv(pcdist2csv,"output_postcode_focus/postcode_focussed_data281021.csv")
 
 
 
