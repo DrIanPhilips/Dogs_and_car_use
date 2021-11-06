@@ -39,7 +39,7 @@ require(spdep)
 
 #this is the dataset wrangled in script 01
 #pcdist2 <- st_read("output_postcode_focus/postcode_focussed_data290621.gpkg")
-pcdist2 <- st_read("output_postcode_focus/postcode_focussed_data270921.gpkg")
+pcdist2 <- st_read("output_postcode_focus/postcode_focussed_data281021.gpkg")
 
 
 
@@ -76,7 +76,7 @@ df %>% filter(!is.na(meankm_pp)) %>%
   xlab("Dogs per person")+
   ylab("Car km travelled per person per year")
 
-ggsave("revisions_output/Fig1.jpg",dpi = 300)
+#ggsave("revisions_output/Fig1.jpg",dpi = 300)
 
 #correlations are high
 cor(df$Dogs_pp,df$meankm_pp,use= "pairwise.complete.obs",method = "pearson")
@@ -108,7 +108,7 @@ df %>% filter(!is.na(meankm_pp)) %>%
   scale_color_ipsum(name = "Urbanisation\n(1 = most urban)")+
   xlab("Dogs per person")+
   ylab("Car km travelled per person per year")
-ggsave("revisions_output/Fig2.jpg",dpi = 300)
+#ggsave("revisions_output/Fig2.jpg",dpi = 300)
 #ggsave("revisions_output/Fig2_names_errorbars.png")
 
 #correl;ations by RU5 
@@ -157,7 +157,8 @@ cor(c$Dogs_pp,c$meankm_pp,use= "pairwise.complete.obs",method = "spearman")#-0.0
 dfDE <- pcdist2 %>% dplyr::select(PostDist,meankm_pp,Dogs_pp,income_quintile,ru5,age_median,dwel_detached_percent,
                                   dwel_semi_detached_percent,dwel_terraced_percent,flat_percent,
                                   econ_all_econ_active_percent,
-                                  nocar_percent,pc_female)%>% filter(!is.na(PostDist))%>%
+                                  nocar_percent,pc_female,pc_child)%>% 
+  filter(!is.na(PostDist))%>%
   filter(!is.na(meankm_pp)) %>% 
   filter(!is.na(income_quintile)) %>%
   filter(!is.na(Dogs_pp)) %>% 
@@ -174,6 +175,10 @@ modA_ols <- lm(data = dfDE,meankm_pp~ Dogs_pp)
 
 summary(modA_ols)
 
+
+modA_child <- lm(data = dfDE,meankm_pp~ pc_child)
+summary(modA_child)
+
 ## This is an interesting finding. Even without removing any outliers or transforming the predictor variable (dogs per person)  
 ## An R squared of 0.32  is achieved when dogs per person is the only 
 ## predictor of car km travelled in England and Wales, 
@@ -185,21 +190,39 @@ modB_ols <- lm(data = dfDE,meankm_pp~ Dogs_pp + income_quintile + ru5)
 modC_ols <- lm(data = dfDE,meankm_pp~ income_quintile + ru5)
 
 
+modB_child <- lm(data = dfDE,meankm_pp~ pc_child + income_quintile + ru5)
+summary(modB_child)
 #The kent & Mulley variables plus the covariates from model B&C
-modD_ols <- lm(data = dfDE,meankm_pp~ Dogs_pp+  income_quintile +ru5 +  age_median + pc_female + dwel_detached_percent +
-                 dwel_semi_detached_percent + dwel_terraced_percent + flat_percent+
+### AND  here also include pc_child   
+
+#Note that if we include % for all 4 housing types, 
+#one will be perfectly collinear with the others.
+#even though ity's percentages it acts like dummy variable and needs a reference case
+summary(lm(formula = dwel_detached_percent~dwel_semi_detached_percent
+   +dwel_terraced_percent+flat_percent, 
+   data = dfDE)) # r sq = 0.99 
+
+#we will remove % flats as a reference case 
+# The kent and Mulley model doesn't include children as a variable. 
+#(the % of families with dependent children) We added it during the revision process at the 
+#reviewer's request.  
+
+
+modD_ols <- lm(data = dfDE,meankm_pp~ Dogs_pp+  income_quintile +ru5 +  age_median + pc_female +
+                 dwel_detached_percent+ dwel_semi_detached_percent + dwel_terraced_percent + 
                  econ_all_econ_active_percent+
-                 nocar_percent
+                 nocar_percent+pc_child
 )
 
-modE_ols <- lm(data = dfDE,meankm_pp~ income_quintile +ru5 +  age_median + pc_female + dwel_detached_percent +
-                 dwel_semi_detached_percent + dwel_terraced_percent + flat_percent+
+modE_ols <- lm(data = dfDE,meankm_pp~ income_quintile +ru5 +  age_median + pc_female +
+                 dwel_detached_percent+dwel_semi_detached_percent + dwel_terraced_percent + 
                  econ_all_econ_active_percent+
-                 nocar_percent
+                 nocar_percent+pc_child
 )
 
-
-
+summary(modD_ols)
+summary(modE_ols)
+AIC(modD_ols)
 require(stargazer) # package for tidy regression results 
 sg_ols <- stargazer(modA_ols, modB_ols,modC_ols,modD_ols,modE_ols,type = "html" ,title = "TITLE:OLS Regression results")
 stargazer(modA_ols, modB_ols,modC_ols,modD_ols,modE_ols,type = "html" ,title = "TITLE:OLS Regression results")
@@ -211,14 +234,14 @@ sg_ols
 stargazer(modA_ols, modB_ols,modC_ols,modD_ols,modE_ols,
           type = "html" ,title = "OLS Regression results",
           digits = 0,
-          out = "revisions_output/OLS2.doc"
+          out = "revisions2_output/OLS2.doc"
 )
 
 #this give 4 decimal places which is best for reporting adj r squared 
 stargazer(modA_ols, modB_ols,modC_ols,modD_ols,modE_ols,
           type = "html" ,title = "OLS Regression results",
           digits = 4,
-          out = "revisions_output/OLS2_4dp.doc"
+          out = "revisions2_output/OLS2_4dp.doc"
 )
 
 
@@ -297,7 +320,7 @@ coords$y = temp$Y
 
 coordscsv <- coords
 st_geometry(coordscsv) <- NULL
-write_csv(coordscsv,"revisions_output/coords.csv")
+write_csv(coordscsv,"revisions2_output/coords.csv")
 
 
 knn <- 4 # 4 is same number of neighbours as rook contiguity & gives similar results to knn = 5 and 10)
@@ -311,8 +334,9 @@ Wknn.list <- nb2listw(neighbours = nb, style = "B")
 lm.morantest(modA_ols,Wknn.list) # 0.4943026189  p-value < 2.2e-16
 lm.morantest(modB_ols,Wknn.list) #0.5184799717  p-value < 2.2e-16
 lm.morantest(modC_ols,Wknn.list) # 0.5244731875 p-value < 2.2e-16
-lm.morantest(modD_ols,Wknn.list) #  0.2962059203 p-value < 2.2e-16
-lm.morantest(modE_ols,Wknn.list) # 0.2901657011 sig  2.2e-16 # still significant but less strong than the simple covariates model.  
+lm.morantest(modD_ols,Wknn.list) #  0.296  still sig    p-value < 7.007e-05
+lm.morantest(modE_ols,Wknn.list) # 0.2893987430 still sig p-value = 3.279e-05
+# still significant but less strong than the simple covariates model.  
 
 
 #------ we can also run local Morans I to see where autocorrelation is statistically significant -----
@@ -353,7 +377,7 @@ glimpse(LMImap)
 #help understand the pattern of where autocorrelation happens 
 #tmap_mode("view")
 
-
+tmap_mode("plot")
 lmiA <- LMImap %>% filter(pr_LI_A < 0.05) %>%
   tm_shape()+
   tm_dots(col = "LI_A", pal = "-RdBu",midpoint = 0)
@@ -376,7 +400,6 @@ lmiB <- LMImap %>% filter(pr_LI_B < 0.05) %>%
 lmiC <- LMImap %>% filter(pr_LI_C < 0.05) %>%
   tm_shape()+
   tm_dots(col = "LI_C", pal = "-RdBu",midpoint = 0)
-
 
 #tmap_mode("view")
 lmiD <- LMImap %>% filter(pr_LI_D < 0.05) %>%
@@ -447,16 +470,19 @@ modC_SDM <- lagsarlm(formula = meankm_pp ~  income_quintile +ru5 ,
                      data = coords, Wknn.list, type = "mixed"
 )
 
-modD_SDM <- lagsarlm(formula = meankm_pp ~  Dogs_pp + income_quintile +ru5 +  age_median + pc_female + dwel_detached_percent +
-                       dwel_semi_detached_percent + dwel_terraced_percent + flat_percent+
+#included pc_child in the analysis here
+modD_SDM <- lagsarlm(formula = meankm_pp~ Dogs_pp +  income_quintile +ru5 +  age_median + pc_female +
+                       dwel_detached_percent+ dwel_semi_detached_percent + dwel_terraced_percent + 
                        econ_all_econ_active_percent+
-                       nocar_percent,data = coords, Wknn.list, type = "mixed"
+                       nocar_percent+pc_child,
+                     data = coords, Wknn.list, type = "mixed"
 )
 
-modE_SDM <- lagsarlm(formula = meankm_pp~ income_quintile +ru5 +  age_median + pc_female + dwel_detached_percent +
-                       dwel_semi_detached_percent + dwel_terraced_percent + flat_percent+
+modE_SDM <- lagsarlm(formula = meankm_pp~ income_quintile +ru5 +  age_median + pc_female +
+                       dwel_detached_percent+ dwel_semi_detached_percent + dwel_terraced_percent + 
                        econ_all_econ_active_percent+
-                       nocar_percent,data = coords, Wknn.list, type = "mixed")
+                       nocar_percent+pc_child,
+                     data = coords, Wknn.list, type = "mixed")
 
 
 
@@ -464,7 +490,7 @@ require(stargazer)
 stargazer(modA_SDM,modB_SDM,modC_SDM,modD_SDM,modE_SDM,
           type = "html" ,title = "TITLE: Spatial Durbin Model Regression results",
           digits = 0,
-          out = "revisions_output/sdm2.doc"
+          out = "revisions2_output/sdm2.doc"
           )
 #stargazer shows that the models with dogs (B & D ) have lower AIC than their comparitor without (C&E)
 
@@ -481,7 +507,7 @@ stargazer(modA_SDM,modB_SDM,modC_SDM,modD_SDM,modE_SDM,type = "text" ,title = "T
 #If AIC is bigger the fit is worse, if AIC is smaller the fit is better.  
 #See Field A 2013 Discovering statistics 4th Edition P324 section 8.5.2 for a nice explanation
 
-
+#If you want a csv table for model results you can use this
 #require(broom)
 # tidy(modA_SDM)
 # write_csv(tidy(modA_SDM),"revisions_output/modA_SDM.csv")
@@ -506,11 +532,11 @@ moran.mc(x = coords$modC_SDM_resid, listw = Wknn.list, nsim = 10000)
 
 coords$modD_SDM_resid <- modD_SDM$residuals
 moran.mc(x = coords$modD_SDM_resid, listw = Wknn.list, nsim = 10000)
-#statistic = -0.0073043, observed rank = 3200, p-value = 0.68
+#statistic = -0.0073043, observed rank = 3200, p-value = 0.7489
 
 coords$modE_SDM_resid <- modE_SDM$residuals
 moran.mc(x = coords$modE_SDM_resid, listw = Wknn.list, nsim = 10000)
-#statistic = -0.0053695, observed rank = 3690, p-value = 0.631
+#statistic = -0.0081002, observed rank = 3690, p-value = 0.702
 
 
 # for all 5 SEM models we see the autocorrelation of residuals are not statistically significant
@@ -518,9 +544,38 @@ moran.mc(x = coords$modE_SDM_resid, listw = Wknn.list, nsim = 10000)
 
 
 #IN SUMMARY 
-#The spatial Durbin Model deals with spatial autocorelation AND the AIC improves relative to OLS
+
+#The spatial Durbin Model deals with spatial autocorelation. AND 
+#the AIC improves relative to OLS
+# pseudo R2 of the modD_SDM is higher than for modD_ols
+#the likelihood ratio test suggests the SDM is more appropriate than the OLS
 
 
+######## SOME DIAGNOSTIC TESTS ############## 
+
+#Lower AICmeans better fit 
+AIC(modD_SDM) # 31762.92
+AIC(modD_ols) # 32191.29
+
+#If we want to get another idea of how accurately our model "Fits" the data, we can 
+#calculate a Pseudo R^2
+1-(modD_SDM$SSE/(var(dfDE$meankm_pp)*(length(dfDE$meankm_pp)-1))) #0.9049
+#Multiple R-squared:  0.8739,	Adjusted R-squared:  0.873 
+
+
+
+LR.sarlm(modD_SDM, modD_ols) #likelihood ratio test to see if SDEM should be restricted
+#to ols
+#If p value is >0.05 we simplify to ols
+#if p value is <0.05 we don't 
+#in this case p value is < 2.2e-16 so we don't restrict to OLS e.g. 
+#we keep SDM 
+
+
+#calculate the sum of squared error
+sse_modD_ols <- sum((fitted(modD_ols) - dfDE$meankm_pp)^2)
+sse_modD_ols <- sum((modD_ols$fitted.values - dfDE$meankm_pp)^2)
+1-(sse_modD_ols/(var(dfDE$meankm_pp)*(length(dfDE$meankm_pp)-1)))
 
 
 ########### Geographically Weighted Regression (GWR) #######################
@@ -585,28 +640,83 @@ gwr_modB_results <- as.data.frame(gwr_modB$SDF)
 
 #modelD
 bandwidth_modD <- gwr.sel(
-  formula = meankm_pp ~ Dogs_pp + income_quintile + ru5 +  age_median + pc_female + dwel_detached_percent +
-    dwel_semi_detached_percent + dwel_terraced_percent + flat_percent+
-    econ_all_econ_active_percent+
-    nocar_percent,
+  formula = meankm_pp~ Dogs_pp +  income_quintile +ru5 +  age_median + pc_female +
+  dwel_detached_percent+ dwel_semi_detached_percent + dwel_terraced_percent + 
+  econ_all_econ_active_percent+
+  nocar_percent+pc_child,
   data = coords_sp
   #,adapt = TRUE
 )
+
 gwr_modD <- gwr(
-  formula = meankm_pp ~ Dogs_pp + income_quintile + ru5 +  age_median + pc_female + dwel_detached_percent +
-                  dwel_semi_detached_percent + dwel_terraced_percent + flat_percent +
-                  econ_all_econ_active_percent + nocar_percent,
+  formula = meankm_pp~ Dogs_pp +  income_quintile +ru5 +  age_median + pc_female +
+  dwel_detached_percent+ dwel_semi_detached_percent + dwel_terraced_percent + 
+  econ_all_econ_active_percent+
+  nocar_percent+pc_child,
                 data = coords_sp,
-                bandwidth = 50000,
-                #adapt = bandwidth_modD,
+                #bandwidth = 50000,
+  bandwidth = bandwidth_modD,            
+  #adapt = bandwidth_modD,
                 se.fit=T,
                 hatmatrix =T )
 
 
 summary(gwr_modD)
 gwr_modD
-gwr_modD_results <- as.data.frame(gwr_modD$SDF)
 
+
+# > gwr_modD
+# Call:
+#   gwr(formula = meankm_pp ~ Dogs_pp + income_quintile + ru5 + age_median + 
+#         pc_female + dwel_detached_percent + dwel_semi_detached_percent + 
+#         dwel_terraced_percent + econ_all_econ_active_percent + nocar_percent + 
+#         pc_child, data = coords_sp, bandwidth = bandwidth_modD, hatmatrix = T, 
+#       se.fit = T)
+# Kernel function: gwr.Gauss 
+# Fixed bandwidth: 43349.96 
+# Summary of GWR coefficient estimates at data points:
+#   Min.     1st Qu.      Median     3rd Qu.        Max.    Global
+# X.Intercept.                 -2502.06503  4366.24327  7206.41771 11106.93417 15477.13202 8095.5035
+# Dogs_pp                       -149.70491   388.76957   688.22005  1174.27598  2446.62148  668.7861
+# income_quintile               -183.54346   -39.87798    22.65387    75.65113   296.65875   72.7961
+# ru52                          -580.54341  -331.52183  -122.03158    61.45980   686.75970   -1.8081
+# ru53                          -156.01419   205.05500   257.84137   502.26701   837.59465  333.6935
+# ru54                           284.88782   675.03918   882.02007  1314.08933  1729.50358  934.4142
+# ru55                           505.43500   860.50852  1131.06869  1568.04986  2479.09423 1059.9811
+# age_median                     -43.18554    13.98702    35.89887    53.55037   123.24708   19.2418
+# pc_female                     -305.73987  -184.29913  -143.39043   -97.61099    92.61973 -157.3444
+# dwel_detached_percent           20.28472    33.29081    41.27128    49.63422    65.22123   48.4282
+# dwel_semi_detached_percent      50.55832   886.84379  1566.17806  2539.39781  3637.64872   19.1948
+# dwel_terraced_percent          -15.08517     7.48004    14.30405    21.96384    36.79375   21.2637
+# econ_all_econ_active_percent     8.12152    30.69787    54.13592    65.39524   112.79940   50.3213
+# nocar_percent                  -95.69636   -57.28433   -40.33066   -28.10477     0.88479  -38.3748
+# pc_child                      -116.87919   -33.17449   -26.63242   -12.82429    30.82370  -17.4803
+# Number of data points: 2037 
+# Effective number of parameters (residual: 2traceS - traceS'S): 231.8553 
+# Effective degrees of freedom (residual: 2traceS - traceS'S): 1805.145 
+# Sigma (residual: 2traceS - traceS'S): 562.6211 
+# Effective number of parameters (model: traceS): 172.5851 
+# Effective degrees of freedom (model: traceS): 1864.415 
+# Sigma (model: traceS): 553.6059 
+# Sigma (ML): 529.6348 
+# AICc (GWR p. 61, eq 2.33; p. 96, eq. 4.21): 31713.36 
+# AIC (GWR p. 96, eq. 4.22): 31506.23 
+# Residual sum of squares: 571405003 
+# Quasi-global R2: 0.915908 
+
+
+#note on AIC 
+# https://towardsdatascience.com/introduction-to-aic-akaike-information-criterion-9c9ba1c96ced
+#The SDM model and R function AIC() give the AIC rather than AICc value
+#so reported the GWR AIC to be conisitent. 
+
+
+summary(modD_SDM)
+
+test <- gwr_modD$results
+gwr_modD_results <- as.data.frame(gwr_modD$SDF)
+names(gwr_modD_results)
+summary(gwr_modD_results$Dogs_pp)
 #----------- prepare GWR results for mapping ------------  
 
 gwrmaps <- dfDE 
@@ -632,18 +742,29 @@ gwrmaps$modDcoeffDogsPP_se <- gwr_modD_results$Dogs_pp_se
 #and dogs_pp is the predictor variable wer'e most interested in.  
 
 #run with fisher to get natural breaks
+
+
+
+tmap_mode("plot")
 gwrcoeffD <-tm_shape(gwrmaps)+
-  tm_polygons(col = "modDcoeffDogsPP", n = 5, style = "fisher",
+  tm_polygons(col = "modDcoeffDogsPP", n = 5, style = "quantile",
               palette = "-RdBu",
               border.lwd = 0,
-              border.alpha = 0)+
-  tm_layout(bg.color = 'lightgrey')
+              border.alpha = 0.5, title = "coefficient Dogs per person \nModel D")+
+  tm_layout(bg.color = 'lightgrey',
+            legend.title.size=0.8,
+            legend.text.size = 0.6,
+            legend.position = c("left","top"))
 
 gwrcoeffD 
-tmap_save(gwrcoeffD,filename = "revisions_output/GWR_ModD_dog_coeff_hires.jpg",dpi = 300,
+
+
+tmap_save(gwrcoeffD,filename = "revisions2_output/GWR_ModD_dog_coeff_hires.jpg",dpi = 300,
           width = 21,height = 29.7, units = "cm")
 
-#good to see what it looks like with another classification too.  
+
+
+#It it good pracctice to see what it looks like with another classification too.  
 # gwrcoeffD <-tm_shape(gwrmaps)+
 #   tm_polygons(col = "modDcoeffDogsPP", n = 5, style = "quantile",
 #               palette = "-RdBu",
@@ -658,60 +779,84 @@ tmap_save(gwrcoeffD,filename = "revisions_output/GWR_ModD_dog_coeff_hires.jpg",d
 
 
 
-#--------- other models can be plotted too ------------ 
-
-names(gwrmaps)
-tmap_mode("plot")
-gwrcoeffA <- tm_shape(gwrmaps)+
-  tm_polygons(col = "modAcoeffDogsPP", n = 5, palette = "-RdBu",border.lwd = 0,
-              border.alpha = 0)
-
-gwrcoeffA
-gwrcoeffB <-tm_shape(gwrmaps)+
-  tm_polygons(col = "modBcoeffDogsPP", n = 5, palette = "-RdBu",border.lwd = 0,
-              border.alpha = 0)+
-  tm_layout(bg.color = 'lightgrey')
-
-gwrcoeffB 
-
-gwrcoeffBse <-tm_shape(gwrmaps)+
-  tm_polygons(col = "modBcoeffDogsPP_se", n = 5, palette = "-RdBu",border.lwd = 0,
-              border.alpha = 0)
-
-
-gwrcoeffD <-tm_shape(gwrmaps)+
-  tm_polygons(col = "modDcoeffDogsPP", n = 5, style = "quantile",
-              palette = "-RdBu",
-              border.lwd = 0,
-              border.alpha = 0)+
-  tm_layout(bg.color = 'lightgrey')
-
-gwrcoeffD 
-
-gwrcoeffDse <-tm_shape(gwrmaps)+
-  tm_polygons(col = "modDcoeffDogsPP_se", n = 5,style = "quantile",
-              palette = "-RdBu",border.lwd = 0,
-              border.alpha = 0)+
-  tm_layout(bg.color = 'lightgrey')
-
-
-
-gwrR2A <- tm_shape(gwrmaps)+
-  tm_polygons(col = "modA_localR2", n = 5, border.lwd = 0,
-              border.alpha = 0)
-
-gwrR2B <- tm_shape(gwrmaps)+
-  tm_polygons(col = "modB_localR2", n = 5,border.lwd = 0,
-              border.alpha = 0)
-
-gwrR2D <- tm_shape(gwrmaps)+
-  tm_polygons(col = "modD_localR2", n = 5,border.lwd = 0,
-              border.alpha = 0)
-
-
-
-
-
-
-
-
+#--------- other models can be plotted too (these maps are not in tht paper) ------------ 
+# 
+# names(gwrmaps)
+# tmap_mode("plot")
+# gwrcoeffA <- tm_shape(gwrmaps)+
+#   tm_polygons(col = "modAcoeffDogsPP", n = 5, palette = "-RdBu",border.lwd = 0,
+#               border.alpha = 0)
+# 
+# gwrcoeffA
+# gwrcoeffB <-tm_shape(gwrmaps)+
+#   tm_polygons(col = "modBcoeffDogsPP", n = 5, palette = "-RdBu",border.lwd = 0,
+#               border.alpha = 0)+
+#   tm_layout(bg.color = 'lightgrey')
+# 
+# gwrcoeffB 
+# 
+# gwrcoeffBse <-tm_shape(gwrmaps)+
+#   tm_polygons(col = "modBcoeffDogsPP_se", n = 5, palette = "-RdBu",border.lwd = 0,
+#               border.alpha = 0)
+# 
+# 
+# gwrcoeffD <-tm_shape(gwrmaps)+
+#   tm_polygons(col = "modDcoeffDogsPP", n = 5, style = "quantile",
+#               palette = "-RdBu",
+#               border.lwd = 0,
+#               border.alpha = 0)+
+#   tm_layout(bg.color = 'lightgrey')
+# 
+# gwrcoeffD 
+# 
+# gwrcoeffDse <-tm_shape(gwrmaps)+
+#   tm_polygons(col = "modDcoeffDogsPP_se", n = 5,style = "quantile",
+#               palette = "-RdBu",border.lwd = 0,
+#               border.alpha = 0)+
+#   tm_layout(bg.color = 'lightgrey')
+# 
+# 
+# 
+# gwrR2A <- tm_shape(gwrmaps)+
+#   tm_polygons(col = "modA_localR2", n = 5, border.lwd = 0,
+#               border.alpha = 0)
+# 
+# gwrR2B <- tm_shape(gwrmaps)+
+#   tm_polygons(col = "modB_localR2", n = 5,border.lwd = 0,
+#               border.alpha = 0)
+# 
+# gwrR2D <- tm_shape(gwrmaps)+
+#   tm_polygons(col = "modD_localR2", n = 5,border.lwd = 0,
+#               border.alpha = 0)
+# 
+# 
+# gwrr2D <-tm_shape(gwrmaps)+
+#   tm_polygons(col = "modD_localR2", n = 5, style = "quantile",
+#               palette = "-RdBu",
+#               border.lwd = 0,
+#               border.alpha = 0.5, title = "coefficient Dogs per person \nModel D")+
+#   tm_layout(bg.color = 'lightgrey',
+#             legend.title.size=0.8,
+#             legend.text.size = 0.6,
+#             legend.position = c("left","top"))
+# 
+# 
+# tmap_save(gwrr2D,filename = "revisions2_output/GWR_ModD_dog_localR2_hiresQuantile.jpg",dpi = 300,
+#           width = 21,height = 29.7, units = "cm")
+# 
+# 
+# gwrr2Dfisher <-tm_shape(gwrmaps)+
+#   tm_polygons(col = "modD_localR2", n = 5, style = "fisher",
+#               palette = "-RdBu",
+#               border.lwd = 0,
+#               border.alpha = 0.5, title = "coefficient Dogs per person \nModel D")+
+#   tm_layout(bg.color = 'lightgrey',
+#             legend.title.size=0.8,
+#             legend.text.size = 0.6,
+#             legend.position = c("left","top"))
+# 
+# 
+# tmap_save(gwrr2Dfisher,filename = "revisions2_output/GWR_ModD_dog_localR2_hiresFisher.jpg",dpi = 300,
+#           width = 21,height = 29.7, units = "cm")
+# 
+# 
